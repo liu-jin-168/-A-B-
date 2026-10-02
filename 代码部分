@@ -1,0 +1,402 @@
+import pandas as pd
+import numpy as np
+from scipy import stats
+import warnings
+warnings.filterwarnings('ignore')
+
+df=pd.read_csv('website_ab_test.csv')
+print(df.head())
+print('\n基本信息：')
+print(df.info())
+print(df.describe())
+
+print('空值：')
+print(df.isna().sum())
+print('重复行：')
+print(df.duplicated().sum())
+print('唯一值：')
+print(df.nunique())
+
+def yes_no_to_binary(x):
+    if x == 'Yes':
+        return 1
+    elif x == 'No':
+        return 0
+    else:
+        return np.nan
+
+binary_columns = ['Purchases', 'Added_to_Cart']
+for col in binary_columns:
+    df[col] = df[col].apply(yes_no_to_binary)
+
+numeric_columns = ['Click Through Rate', 'Conversion Rate', 'Bounce Rate',
+                  'Scroll_Depth', 'Age', 'Session_Duration', 'Purchases', 'Added_to_Cart']
+
+outlier_summary = {}
+for col in numeric_columns:
+    if col in df.columns:
+        Q1 = df[col].quantile(0.25)
+        Q3 = df[col].quantile(0.75)
+        IQR = Q3 - Q1
+        lower_bound = Q1 - 1.5 * IQR
+        upper_bound = Q3 + 1.5 * IQR
+
+        outliers = df[(df[col] < lower_bound) | (df[col] > upper_bound)]
+        outlier_count = len(outliers)
+        outlier_percent = (outlier_count / len(df)) * 100
+
+        outlier_summary[col] = {
+            '异常值数量': outlier_count,
+            '异常值占比(%)': round(outlier_percent, 2),
+            '下界': round(lower_bound, 4),
+            '上界': round(upper_bound, 4)
+        }
+
+        print(f"{col}:")
+        print(f"  异常值数量: {outlier_count} ({outlier_percent:.2f}%)")
+        print(f"  正常范围: [{lower_bound:.4f}, {upper_bound:.4f}]")
+
+print(df[['Age']].min())
+print(df[['Age']].max())
+
+print('基本信息：')
+print(df.info())
+print('空值：')
+print(df.isna().sum())
+print('重复行：')
+print(df.duplicated().sum())
+print('唯一值：')
+print(df.nunique())
+
+df['Purchase_Rate'] = df['Purchases'].mean()
+df['Cart_Rate'] = df['Added_to_Cart'].mean()
+cart_users = df[df['Added_to_Cart'] == 1]
+if len(cart_users) > 0:
+  df['Cart_to_Purchase_Rate'] = cart_users['Purchases'].mean()
+else:
+  df['Cart_to_Purchase_Rate'] = 0
+df['Session_Duration_Bucket'] = pd.cut(
+    df['Session_Duration'],
+    bins=[0, 300, 600, 900, 1200, float('inf')],
+    labels=['0‑5 分钟', '5‑10 分钟', '10‑15 分钟', '15‑20 分钟', '20 分钟以上']
+)
+df['Age_Bucket'] = pd.cut(
+    df['Age'],
+    bins=[18, 25, 35, 45, 55, 65, 80],
+    labels=['18-25岁', '26-35岁', '36-45岁', '46-55岁', '56-65岁', '65岁以上']
+)
+print(df.groupby(['Age_Bucket','Theme'])['Click Through Rate'].mean())
+group_counts = df['Theme'].value_counts()
+light_theme_count = group_counts.get('Light Theme', 0)
+dark_theme_count = group_counts.get('Dark Theme', 0)
+total_count = len(df)
+
+light_theme_pct = (light_theme_count / total_count) * 100
+dark_theme_pct = (dark_theme_count / total_count) * 100
+
+print(f"总样本量: {total_count}")
+print(f"浅色主题(Light Theme)样本量: {light_theme_count} ({light_theme_pct:.2f}%)")
+print(f"深色主题(Dark Theme)样本量: {dark_theme_count} ({dark_theme_pct:.2f}%)")
+
+sample_balance = abs(light_theme_pct - dark_theme_pct) <= 10
+if sample_balance:
+    print("✅ 分组样本量平衡（差异≤10%）")
+else:
+    print(f"⚠️  分组样本量不平衡（差异={light_theme_pct - dark_theme_pct:.2f}%）")
+    print("建议：后续分析需考虑样本量差异对结果的影响")
+
+key_metrics = [
+    'Click Through Rate',  # 点击率
+    'Conversion Rate',     # 转化率
+    'Bounce Rate',         # 跳出率
+    'Scroll_Depth',        # 滚动深度
+    'Session_Duration',    # 会话时长
+    'Purchases',           # 购买率（0/1，均值即为率）
+    'Added_to_Cart'        # 加购率（0/1，均值即为率）
+]
+
+grouped_stats = df.groupby('Theme')[key_metrics].agg(['mean', 'std', 'count']).round(4)
+
+for metric in key_metrics:
+    print(f"\n【{metric}】")
+    print(f"  浅色主题(Light Theme):")
+    print(f"    均值: {grouped_stats.loc['Light Theme', (metric, 'mean')]:.4f}")
+    print(f"    标准差: {grouped_stats.loc['Light Theme', (metric, 'std')]:.4f}")
+    print(f"    样本量: {int(grouped_stats.loc['Light Theme', (metric, 'count')])}")
+
+    print(f"  深色主题(Dark Theme):")
+    print(f"    均值: {grouped_stats.loc['Dark Theme', (metric, 'mean')]:.4f}")
+    print(f"    标准差: {grouped_stats.loc['Dark Theme', (metric, 'std')]:.4f}")
+    print(f"    样本量: {int(grouped_stats.loc['Dark Theme', (metric, 'count')])}")
+
+    # 计算绝对差异和相对差异
+    light_mean = grouped_stats.loc['Light Theme', (metric, 'mean')]
+    dark_mean = grouped_stats.loc['Dark Theme', (metric, 'mean')]
+    abs_diff = dark_mean - light_mean
+    rel_diff = (abs_diff / light_mean) * 100 if light_mean != 0 else 0
+
+    print(f"  差异分析:")
+    print(f"    绝对差异: {abs_diff:.4f}")
+    print(f"    相对差异: {rel_diff:.2f}%")
+
+    # 业务意义判断
+    if metric in ['Bounce Rate']:
+        # 跳出率越低越好
+        if dark_mean < light_mean:
+            print(f"    结论: 深色主题在{metric}上表现更好（更低）")
+        else:
+            print(f"    结论: 浅色主题在{metric}上表现更好（更低）")
+    else:
+        # 其他指标越高越好
+        if dark_mean > light_mean:
+            print(f"    结论: 深色主题在{metric}上表现更好（更高）")
+        else:
+            print(f"    结论: 浅色主题在{metric}上表现更好（更高）")
+
+light_theme_data = df[df['Theme'] == 'Light Theme']
+dark_theme_data = df[df['Theme'] == 'Dark Theme']
+test_results = {}
+
+# 连续型指标的t检验
+continuous_metrics = ['Click Through Rate', 'Conversion Rate', 'Bounce Rate', 'Scroll_Depth', 'Session_Duration']
+for metric in continuous_metrics:
+    # 提取两组数据
+    group1 = light_theme_data[metric].dropna()
+    group2 = dark_theme_data[metric].dropna()
+
+    # 执行独立样本t检验（equal_var=False表示不假设方差相等）
+    t_stat, p_value = stats.ttest_ind(group1, group2, equal_var=False)
+
+    # 判断显著性
+    significance = "显著" if p_value < 0.05 else "不显著"
+
+    # 存储结果
+    test_results[metric] = {
+        '检验方法': '独立样本t检验',
+        't统计量': round(t_stat, 4),
+        'p值': round(p_value, 4),
+        '显著性': significance
+    }
+
+    # 输出结果
+    print(f"\n【{metric}】")
+    print(f"  检验方法: 独立样本t检验")
+    print(f"  t统计量: {t_stat:.4f}")
+    print(f"  p值: {p_value:.4f}")
+    print(f"  显著性: {significance} (α=0.05)")
+
+# 2. 二分类指标的卡方检验
+binary_metrics = ['Purchases', 'Added_to_Cart']
+for metric in binary_metrics:
+    # 构建列联表（2x2）
+    # 行：主题（浅色、深色），列：是否发生（0、1）
+    contingency_table = pd.crosstab(df['Theme'], df[metric])
+
+    # 执行卡方检验
+    chi2_stat, p_value, dof, expected = stats.chi2_contingency(contingency_table)
+
+    # 判断显著性
+    significance = "显著" if p_value < 0.05 else "不显著"
+
+    # 存储结果
+    test_results[metric] = {
+        '检验方法': '卡方检验',
+        'chi2统计量': round(chi2_stat, 4),
+        'p值': round(p_value, 4),
+        '自由度': dof,
+        '显著性': significance
+    }
+
+    # 输出结果
+    print(f"\n【{metric}（转化率）】")
+    print(f"  检验方法: 卡方检验")
+    print(f"  chi2统计量: {chi2_stat:.4f}")
+    print(f"  p值: {p_value:.4f}")
+    print(f"  自由度: {dof}")
+    print(f"  显著性: {significance} (α=0.05)")
+    print(f"  列联表:")
+    print(contingency_table)
+
+# 3.4 效应量计算（Cohen's d）- 评估差异的实际意义
+
+# 定义Cohen's d计算函数
+def cohens_d(group1, group2):
+    n1, n2 = len(group1), len(group2)
+    var1, var2 = group1.var(), group2.var()
+
+    # 合并标准差
+    pooled_std = np.sqrt(((n1 - 1) * var1 + (n2 - 1) * var2) / (n1 + n2 - 2))
+
+    # 均值差异
+    mean_diff = group2.mean() - group1.mean()
+
+    # Cohen's d
+    d = mean_diff / pooled_std
+
+    return d
+
+# 效应量解释标准
+effect_size_interpretation = {
+    '微小': (-0.2, 0.2),
+    '小': (-0.5, -0.2) + (0.2, 0.5),
+    '中': (-0.8, -0.5) + (0.5, 0.8),
+    '大': (-float('inf'), -0.8) + (0.8, float('inf'))
+}
+
+def interpret_effect_size(d):
+    """解释效应量大小"""
+    d_abs = abs(d)
+    if d_abs < 0.2:
+        return "微小"
+    elif d_abs < 0.5:
+        return "小"
+    elif d_abs < 0.8:
+        return "中"
+    else:
+        return "大"
+
+# 计算连续型指标的效应量
+
+for metric in continuous_metrics:
+    group1 = light_theme_data[metric].dropna()
+    group2 = dark_theme_data[metric].dropna()
+
+    d = cohens_d(group1, group2)
+    effect_size = interpret_effect_size(d)
+
+    # 更新检验结果
+    test_results[metric]['效应量(Cohen\'s d)'] = round(d, 4)
+    test_results[metric]['效应量大小'] = effect_size
+
+    # 输出结果
+    print(f"\n【{metric}】")
+    print(f"  Cohen's d: {d:.4f}")
+    print(f"  效应量大小: {effect_size}")
+
+    # 结合显著性和效应量给出综合结论
+    sig = test_results[metric]['显著性']
+    if sig == "显著" and effect_size in ["中", "大"]:
+        conclusion = "✅ 差异具有统计显著性且实际业务意义较大"
+    elif sig == "显著" and effect_size in ["小", "微小"]:
+        conclusion = "⚠️  差异具有统计显著性但实际业务意义较小"
+    elif sig == "不显著" and effect_size in ["中", "大"]:
+        conclusion = "⚠️  差异实际业务意义较大但未达到统计显著性（可能样本量不足）"
+    else:
+        conclusion = "❌ 差异既无统计显著性也无实际业务意义"
+
+    print(f"  综合结论: {conclusion}")
+
+# 3.5 生成AB测试分析报告表格
+
+# 创建汇总表格
+summary_data = []
+for metric in key_metrics:
+    # 获取基础统计信息
+    light_mean = grouped_stats.loc['Light Theme', (metric, 'mean')]
+    dark_mean = grouped_stats.loc['Dark Theme', (metric, 'mean')]
+    abs_diff = dark_mean - light_mean
+    rel_diff = (abs_diff / light_mean) * 100 if light_mean != 0 else 0
+
+    # 获取检验结果
+    result = test_results[metric]
+    p_value = result.get('p值', 'N/A')
+    significance = result.get('显著性', 'N/A')
+    effect_size = result.get('效应量(Cohen\'s d)', 'N/A') if metric in continuous_metrics else 'N/A'
+    effect_size_desc = result.get('效应量大小', 'N/A') if metric in continuous_metrics else 'N/A'
+
+    summary_data.append({
+        '指标名称': metric,
+        '浅色主题均值': round(light_mean, 4),
+        '深色主题均值': round(dark_mean, 4),
+        '绝对差异': round(abs_diff, 4),
+        '相对差异(%)': round(rel_diff, 2),
+        'p值': p_value,
+        '统计显著性': significance,
+        '效应量(Cohen\'s d)': effect_size,
+        '效应量大小': effect_size_desc
+    })
+
+# 转换为DataFrame并显示
+summary_df = pd.DataFrame(summary_data)
+print("AB测试关键指标分析汇总表：")
+print(summary_df.to_string(index=False))
+
+
+
+# 3.6 关键发现总结
+print("\n" + "="*60)
+print("AB测试核心分析 - 第六步：关键发现总结")
+print("="*60)
+
+# 找出显著且效应量较大的指标
+significant_metrics = summary_df[summary_df['统计显著性'] == '显著']
+important_findings = significant_metrics[significant_metrics['效应量大小'].isin(['中', '大'])]
+
+print("1. 统计显著且具有实际业务意义的发现：")
+if len(important_findings) > 0:
+    for _, row in important_findings.iterrows():
+        metric = row['指标名称']
+        rel_diff = row['相对差异(%)']
+        direction = "提升" if rel_diff > 0 else "降低"
+
+        if metric == 'Bounce Rate':
+            # 跳出率越低越好
+            if rel_diff < 0:
+                print(f"   - {metric}: 深色主题比浅色主题{direction}了{abs(rel_diff):.2f}%，差异显著且效应量{row['效应量大小']}")
+                print(f"     业务意义：跳出率降低有助于提升用户留存")
+            else:
+                print(f"   - {metric}: 深色主题比浅色主题{direction}了{abs(rel_diff):.2f}%，差异显著且效应量{row['效应量大小']}")
+                print(f"     业务意义：跳出率升高不利于用户留存")
+        else:
+            # 其他指标越高越好
+            if rel_diff > 0:
+                print(f"   - {metric}: 深色主题比浅色主题{direction}了{abs(rel_diff):.2f}%，差异显著且效应量{row['效应量大小']}")
+                print(f"     业务意义：该指标提升有助于提升整体业务表现")
+            else:
+                print(f"   - {metric}: 深色主题比浅色主题{direction}了{abs(rel_diff):.2f}%，差异显著且效应量{row['效应量大小']}")
+                print(f"     业务意义：该指标降低不利于整体业务表现")
+else:
+    print("   - 未发现统计显著且效应量较大的指标差异")
+
+# 找出不显著但效应量较大的指标
+potential_metrics = summary_df[(summary_df['统计显著性'] == '不显著') &
+                              (summary_df['效应量大小'].isin(['中', '大']))]
+
+if len(potential_metrics) > 0:
+    print(f"\n2. 潜在有价值的发现（效应量较大但未达统计显著性）：")
+    for _, row in potential_metrics.iterrows():
+        print(f"   - {row['指标名称']}: 深色主题比浅色主题差异{row['相对差异(%)']:.2f}%，效应量{row['效应量大小']}")
+        print(f"     建议：考虑增加样本量进一步验证")
+
+# 整体建议
+print(f"\n3. 整体建议：")
+if len(important_findings) > 0:
+    # 计算正面和负面指标的数量
+    positive_metrics = 0
+    negative_metrics = 0
+
+    for _, row in important_findings.iterrows():
+        metric = row['指标名称']
+        rel_diff = row['相对差异(%)']
+
+        if metric == 'Bounce Rate':
+            if rel_diff < 0:
+                positive_metrics += 1
+            else:
+                negative_metrics += 1
+        else:
+            if rel_diff > 0:
+                positive_metrics += 1
+            else:
+                negative_metrics += 1
+
+    if positive_metrics > negative_metrics:
+        print("   - 基于现有数据，深色主题在更多关键指标上表现更优")
+        print("   - 建议：可以考虑推广深色主题，或进行更大规模的验证测试")
+    else:
+        print("   - 基于现有数据，浅色主题在更多关键指标上表现更优")
+        print("   - 建议：继续使用浅色主题，或优化深色主题后重新测试")
+else:
+    print("   - 基于现有数据，两种主题在关键指标上无显著差异")
+    print("   - 建议：可以考虑根据用户偏好（如年龄、地区）进行个性化主题展示")
+    print("   - 或：收集更多样本数据，进一步验证潜在的差异")
